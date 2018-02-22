@@ -1,0 +1,6 @@
+-sname qserv
+
+-setcookie qserv_cookie
+
++K true
++A30
