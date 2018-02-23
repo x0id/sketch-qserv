@@ -34,7 +34,7 @@ init(_Args) ->
     Port = case application:get_env(port) of
         {ok, Val} -> Val; _ -> 5555 end,
     error_logger:info_msg("gonna listen on ~p~n", [Port]),
-    case gen_tcp:listen(Port, [{port, Port}]) of
+    case gen_tcp:listen(Port, [list, {reuseaddr, true}, {port, Port}]) of
     {ok, Sock} ->
         error_logger:info_msg("am listening on ~p~n", [Sock]),
         {ok, {#{strategy => simple_one_for_one}, [#{

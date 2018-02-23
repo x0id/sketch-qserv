@@ -30,21 +30,22 @@ start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
 
 -record(state, {
-    lsock,
-    sock
+    sock,       % underlying tcp socket
+    left = [],  % unterminated line remainder
+    queue       % banker's queue
 }).
 
 % gen_server callbacks
 
 init(LSock) ->
     error_logger:info_msg("gonna accept on ~p~n", [LSock]),
-    gen_server:cast(self(), accept),
-    {ok, #state{lsock = LSock}}.
+    gen_server:cast(self(), {accept, LSock}),
+    {ok, init_queue(#state{})}.
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast(accept, State = #state{lsock = LSock}) ->
+handle_cast({accept, LSock}, State) ->
     case gen_tcp:accept(LSock) of
     {ok, Sock} ->
         error_logger:info_msg("accepted ~p~n", [Sock]),
@@ -55,28 +56,20 @@ handle_cast(accept, State = #state{lsock = LSock}) ->
     {error, Reason} ->
         error_logger:error_msg("accept error: ~p~n", [Reason]),
         {stop, normal}
-      % gen_server:cast(self(), accept),
-      % {noreply, State}
     end;
 
 handle_cast(Msg, State) ->
     io:format("cast: ~p~n", [Msg]),
     {noreply, State}.
 
-handle_info({tcp_closed, Sock}, State = #state{sock = Sock}) ->
+handle_info({tcp_closed, Sock}, #state{sock = Sock}) ->
     error_logger:info_msg("closing socket ~p~n", [Sock]),
     ok = gen_tcp:close(Sock),
-    {stop, normal, #state{}};
+    supervisor:terminate_child(qserv_listener, self()),
+    {noreply, #state{}};
 
 handle_info({tcp, Sock, Data}, State = #state{sock = Sock}) ->
-    error_logger:info_msg("received ~p~n", [Data]),
-    case gen_tcp:send(Sock, Data) of
-    ok ->
-        ok;
-    {error, Reason} ->
-        error_logger:error_msg("send error: ~p~n", [Reason])
-    end,
-    {noreply, State};
+    {noreply, handle_data(Data, State)};
 
 handle_info(Info, State) ->
     io:format("info: ~p~n", [Info]),
@@ -89,3 +82,58 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 % internal functions
+
+% handle data chunk possibly splitting it into lines
+handle_data(Data, State = #state{left = []}) ->
+    error_logger:info_msg("data: ~p~n", [Data]),
+    handle_lines(string:split(Data, "\n", all), State);
+
+% if there was unhandled remainder, add it to the data chunk
+handle_data(Data, State = #state{left = Left}) ->
+    handle_data(Left ++ Data, State#state{left = []}).
+
+% save remainder if there was no newline at the end of chunk
+handle_lines([Str], State) when Str =/= [] ->
+    State#state{left = Str};
+handle_lines([Str | T], State) ->
+    handle_lines(T, handle_line(Str, State));
+handle_lines([], State) ->
+    State.
+
+% process line, detect command
+handle_line("in" ++ Payload, State) ->
+    enqueue(Payload, State);
+handle_line("out", State) ->
+    dequeue(State);
+handle_line([], State) ->
+    State;
+handle_line(Line, State) ->
+    error_logger:error_msg("unexpected line ~p~n", [Line]),
+    State.
+
+% create empty banker's queue
+init_queue(State) ->
+    State#state{queue = queue:new()}.
+
+% enqueue payload
+enqueue(Data, State = #state{queue = Q}) ->
+    State#state{queue = queue:in(Data, Q)}.
+
+% output result (one item, if any)
+dequeue(State = #state{queue = Q}) ->
+    case queue:out(Q) of
+    {{value, Data}, Q1} ->
+        send_data(Data ++ "\n", State),
+        State#state{queue = Q1};
+    {empty, Q} ->
+        State
+    end.
+
+% send data chunk to client
+send_data(Data, #state{sock = Sock}) ->
+    case gen_tcp:send(Sock, Data) of
+    ok ->
+        ok;
+    {error, Reason} ->
+        error_logger:error_msg("send error: ~p~n", [Reason])
+    end.
