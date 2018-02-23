@@ -26,7 +26,6 @@
 % external API
 
 start_link(Args) ->
-    error_logger:info_msg("start worker with ~p~n", [Args]),
     gen_server:start_link(?MODULE, Args, []).
 
 -record(state, {
@@ -38,7 +37,6 @@ start_link(Args) ->
 % gen_server callbacks
 
 init(LSock) ->
-    error_logger:info_msg("gonna accept on ~p~n", [LSock]),
     gen_server:cast(self(), {accept, LSock}),
     {ok, init_queue(#state{})}.
 
@@ -48,7 +46,6 @@ handle_call(_Request, _From, State) ->
 handle_cast({accept, LSock}, State) ->
     case gen_tcp:accept(LSock) of
     {ok, Sock} ->
-        error_logger:info_msg("accepted ~p~n", [Sock]),
         % start next acceptor/worker
         qserv_listener:start_worker(),
         % continue serving input stream
@@ -58,21 +55,18 @@ handle_cast({accept, LSock}, State) ->
         {stop, normal}
     end;
 
-handle_cast(Msg, State) ->
-    io:format("cast: ~p~n", [Msg]),
+handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({tcp_closed, Sock}, #state{sock = Sock}) ->
-    error_logger:info_msg("closing socket ~p~n", [Sock]),
-    ok = gen_tcp:close(Sock),
+    gen_tcp:close(Sock),
     supervisor:terminate_child(qserv_listener, self()),
     {noreply, #state{}};
 
 handle_info({tcp, Sock, Data}, State = #state{sock = Sock}) ->
     {noreply, handle_data(Data, State)};
 
-handle_info(Info, State) ->
-    io:format("info: ~p~n", [Info]),
+handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -85,7 +79,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 % handle data chunk possibly splitting it into lines
 handle_data(Data, State = #state{left = []}) ->
-    error_logger:info_msg("data: ~p~n", [Data]),
     handle_lines(string:split(Data, "\n", all), State);
 
 % if there was unhandled remainder, add it to the data chunk
@@ -105,10 +98,8 @@ handle_line("in" ++ Payload, State) ->
     enqueue(Payload, State);
 handle_line("out", State) ->
     dequeue(State);
-handle_line([], State) ->
-    State;
-handle_line(Line, State) ->
-    error_logger:error_msg("unexpected line ~p~n", [Line]),
+% simply ignore unexpected garbage
+handle_line(_, State) ->
     State.
 
 % create empty banker's queue

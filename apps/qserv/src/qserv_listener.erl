@@ -33,16 +33,15 @@ start_worker() ->
 init(_Args) ->
     Port = case application:get_env(port) of
         {ok, Val} -> Val; _ -> 5555 end,
-    error_logger:info_msg("gonna listen on ~p~n", [Port]),
     case gen_tcp:listen(Port, [list, {reuseaddr, true}, {port, Port}]) of
     {ok, Sock} ->
-        error_logger:info_msg("am listening on ~p~n", [Sock]),
+        error_logger:info_msg("listening on port ~p~n", [Port]),
         {ok, {#{strategy => simple_one_for_one}, [#{
             id => qserv_worker,
             start => {qserv_worker, start_link, [Sock]}
         }]}};
     {error, Reason} ->
-        error_logger:error_msg("listen error: ~p~n", [Reason]),
+        error_logger:error_msg("listen error (port ~p): ~p~n", [Port, Reason]),
         ignore
     end.
 
