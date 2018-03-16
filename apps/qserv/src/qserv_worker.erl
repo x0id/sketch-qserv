@@ -46,6 +46,7 @@ handle_call(_Request, _From, State) ->
 handle_cast({accept, LSock}, State) ->
     case gen_tcp:accept(LSock) of
     {ok, Sock} ->
+        catch print_info(Sock),
         % start next acceptor/worker
         qserv_listener:start_worker(),
         % continue serving input stream
@@ -128,3 +129,11 @@ send_data(Data, #state{sock = Sock}) ->
     {error, Reason} ->
         error_logger:error_msg("send error: ~p~n", [Reason])
     end.
+
+print_info(S) ->
+    {ok, {{A1, B1, C1, D1}, P1}} = prim_inet:sockname(S),
+    {ok, {{A2, B2, C2, D2}, P2}} = prim_inet:peername(S),
+    error_logger:info_msg(
+        "accepted connection to ~w.~w.~w.~w:~w from ~w.~w.~w.~w:~w~n", [
+        A1, B1, C1, D1, P1, A2, B2, C2, D2, P2
+    ]).
